@@ -1,0 +1,7 @@
+[package]
+name = "tracing-defmt"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+defmt = "0.3"
