@@ -9,6 +9,13 @@ tracing-defmt-macros = { path = "macros" }
 
 [dev-dependencies]
 defmt = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+opentelemetry = "0.21"
+opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
+tracing-opentelemetry = "0.22"
+opentelemetry-stdout = { version = "0.2", features = ["trace"] }
+tokio = { version = "1", features = ["full"] }
 
 [workspace]
 members = ["macros"]

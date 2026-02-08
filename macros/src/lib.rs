@@ -27,7 +27,6 @@ use syn::{
 /// ```
 #[proc_macro_attribute]
 pub fn instrument(args: TokenStream, item: TokenStream) -> TokenStream {
-    // Parse attributes as a comma-separated list of Meta items
     let args_parsed = parse_macro_input!(args with Punctuated::<Meta, Token![,]>::parse_terminated);
     let item_fn = parse_macro_input!(item as ItemFn);
 
@@ -75,7 +74,8 @@ pub fn instrument(args: TokenStream, item: TokenStream) -> TokenStream {
     let macro_path = level_to_macro_path(&level);
 
     // Build format string and arguments
-    let mut fmt_str = String::new();
+    // We prefix with "span_enter: " to make it easily parsable for host tools
+    let mut fmt_str = String::from("span_enter: ");
     fmt_str.push_str(&name);
 
     let mut log_args = Vec::new();
@@ -118,7 +118,8 @@ pub fn instrument(args: TokenStream, item: TokenStream) -> TokenStream {
             struct DefmtInstrumentGuard;
             impl Drop for DefmtInstrumentGuard {
                 fn drop(&mut self) {
-                    #macro_path!("exit");
+                    // We emit "span_exit: name" to allow matching exit events
+                    #macro_path!("span_exit: {}", #name);
                 }
             }
             let _guard = DefmtInstrumentGuard;
@@ -144,6 +145,7 @@ impl Parse for LogArgs {
         let mut fields = Vec::new();
         let mut fmt_str = None;
         let mut fmt_args = Vec::new();
+        let mut has_fmt_str = false;
 
         while !input.is_empty() {
             // 1. Check for key-value: key = value
@@ -171,40 +173,29 @@ impl Parse for LogArgs {
             }
 
             // 3. Check for Format String (LitStr)
-            // Only if we haven't found one yet.
-            if fmt_str.is_none() && input.peek(LitStr) {
+            if !has_fmt_str && input.peek(LitStr) {
                 fmt_str = Some(input.parse()?);
+                has_fmt_str = true;
                 if input.peek(Token![,]) {
                     let _ = input.parse::<Token![,]>();
                 }
                 continue;
             }
 
-            // 4. Expression (Format Arg or Shorthand Field)
+            // 4. Expression
             let expr: Expr = input.parse()?;
-
-            if fmt_str.is_some() {
-                // If we have a format string, this is definitely a format argument.
+            if has_fmt_str {
+                // If we have a format string, this is a format argument
                 fmt_args.push(expr);
             } else {
-                // If we don't have a format string yet, it is likely a shorthand field `x`.
-                // Convert `x` to `x = x`.
-                // Note: If `tracing` allows expressions as format strings (it usually requires literals),
-                // we might be misinterpreting here. But defmt also requires literals.
-
-                // Try to extract identifier for shorthand
-                let mut is_shorthand = false;
+                // If we don't have a format string, this is a shorthand field
+                // `x` -> `x = x`
                 if let Expr::Path(ep) = &expr {
                     if let Some(ident) = ep.path.get_ident() {
                         fields.push((ident.to_string(), expr.clone()));
-                        is_shorthand = true;
+                    } else {
+                        // Ignore complex expressions that aren't fields or fmt args
                     }
-                }
-
-                if !is_shorthand {
-                    // It's an expression but we expected a field or format string.
-                    // We'll ignore it to avoid compile errors, assuming it might be some
-                    // tracing syntax we don't support or it's invalid.
                 }
             }
 
