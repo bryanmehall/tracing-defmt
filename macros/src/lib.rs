@@ -95,7 +95,8 @@ pub fn instrument(args: TokenStream, item: TokenStream) -> TokenStream {
                     }
                     fmt_str.push_str(&arg_name);
                     fmt_str.push_str("={}");
-                    log_args.push(&pat_ident.ident);
+                    let ident = &pat_ident.ident;
+                    log_args.push(quote!(#ident));
                     has_args = true;
                 }
             }
@@ -105,6 +106,11 @@ pub fn instrument(args: TokenStream, item: TokenStream) -> TokenStream {
     if has_args {
         fmt_str.push(')');
     }
+
+    // Add file and line info
+    fmt_str.push_str("; file={}, line={}");
+    log_args.push(quote!(file!()));
+    log_args.push(quote!(line!()));
 
     let block = &item_fn.block;
     let attrs = &item_fn.attrs;
