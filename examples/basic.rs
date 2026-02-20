@@ -1,8 +1,15 @@
 use tracing_defmt as tracing;
 
 #[tracing::instrument]
+fn nested_call(value: u8) {
+    tracing::info!("Inside nested_call with value={}", value);
+    tracing::trace!("Very verbose info from nested call");
+}
+
+#[tracing::instrument]
 fn my_function(x: u8, y: u8) {
     tracing::info!("Entered my_function with x={}, y={}", x, y);
+    nested_call(x + y);
     tracing::warn!("This is a warning inside the function");
 }
 

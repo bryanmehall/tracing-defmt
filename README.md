@@ -1,5 +1,7 @@
 # tracing-defmt
 
+![CI](https://github.com/tracing-defmt/tracing-defmt/actions/workflows/ci.yml/badge.svg)
+
 A **syntax-compatible** facade for [tracing](https://github.com/tokio-rs/tracing) that outputs directly to [defmt](https://github.com/knurling-rs/defmt).
 
 ## Overview
@@ -11,6 +13,26 @@ However, using `tracing` with a subscriber on embedded systems often forces a co
 2.  **Formatting on Device**: To log these erased values, one must typically use `defmt::Debug2Format`, which performs formatting on the device, negating `defmt`'s bandwidth and size savings.
 
 `tracing-defmt` resolves this by providing macros that **look** like `tracing` macros but **expand** to `defmt` macros at compile time. This allows you to write code using the familiar `tracing` API while enjoying the full efficiency of `defmt`.
+
+## Architecture
+
+The following diagram illustrates how `tracing-defmt` enables the reconstruction of distributed traces on the host from minimal binary logs generated on the embedded device.
+
+```mermaid
+graph LR
+    Device[Embedded Device]
+    
+    subgraph Host ["Host / Server"]
+        Elf[ELF Firmware Image]
+        Reconstructor[Trace Reconstructor]
+    end
+
+    Backend[OpenTelemetry Collector<br/>or Tracing Backend]
+
+    Device -->|Binary Defmt Logs via<br/>Debug Probe, UART, HTTP, MQTT, etc| Reconstructor
+    Elf -.->|Debug Info / Symbols| Reconstructor
+    Reconstructor -->|Reconstructed Spans<br/>OTLP| Backend
+```
 
 ## Installation
 

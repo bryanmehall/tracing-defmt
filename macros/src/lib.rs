@@ -107,11 +107,6 @@ pub fn instrument(args: TokenStream, item: TokenStream) -> TokenStream {
         fmt_str.push(')');
     }
 
-    // Add file and line info
-    fmt_str.push_str("; file={}, line={}");
-    log_args.push(quote!(file!()));
-    log_args.push(quote!(line!()));
-
     let block = &item_fn.block;
     let attrs = &item_fn.attrs;
     let vis = &item_fn.vis;

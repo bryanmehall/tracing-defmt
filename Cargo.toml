@@ -4,18 +4,19 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-defmt = "1.0.0"
+defmt = "1.0"
 tracing-defmt-macros = { path = "macros" }
 
 [dev-dependencies]
-defmt = "1.0.0"
+defmt = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-opentelemetry = "0.21"
-opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
-tracing-opentelemetry = "0.22"
-opentelemetry-stdout = { version = "0.2", features = ["trace"] }
+opentelemetry = "0.27"
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+tracing-opentelemetry = "0.28"
+opentelemetry-stdout = { version = "0.27", features = ["trace"] }
 tokio = { version = "1", features = ["full"] }
+tracing-fluent-assertions = "0.3.0"
 
 [workspace]
-members = ["macros"]
+members = ["macros", "decoder"]

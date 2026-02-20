@@ -1,0 +1,11 @@
+[package]
+name = "tracing-defmt-decoder"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+defmt-decoder = "1.0"
+tracing = "0.1"
+tracing-opentelemetry = "0.28"
+thiserror = "2.0"
+log = "0.4"
