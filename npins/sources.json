@@ -5,6 +5,18 @@
       "name": "nixpkgs-unstable",
       "url": "https://releases.nixos.org/nixpkgs/nixpkgs-26.05pre946960.d1c15b7d5806/nixexprs.tar.xz",
       "hash": "0i1hxm0mcqm561q9gkh8fkzrbpcmcz4l8axq3bhfy65ybx2a53zf"
+    },
+    "rust-overlay": {
+      "type": "Git",
+      "repository": {
+        "type": "GitHub",
+        "owner": "oxalica",
+        "repo": "rust-overlay"
+      },
+      "branch": "master",
+      "revision": "8b3f46b8a6d17ab46e533a5e3d5b1cc2ff228860",
+      "url": "https://github.com/oxalica/rust-overlay/archive/8b3f46b8a6d17ab46e533a5e3d5b1cc2ff228860.tar.gz",
+      "hash": "0yfi6r12pap2jfbbrijx65g0clmv5gw654hlgrapr5q3qjl6panc"
     }
   },
   "version": 3
