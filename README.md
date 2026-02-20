@@ -2,17 +2,9 @@
 
 ![CI](https://github.com/bryanmehall/tracing-defmt/actions/workflows/ci.yml/badge.svg)
 
-A **syntax-compatible** facade for [tracing](https://github.com/tokio-rs/tracing) that outputs directly to [defmt](https://github.com/knurling-rs/defmt).
+A **syntax-compatible** version of the [tracing](https://github.com/tokio-rs/tracing) crate for no_std or memory constrained devices. 
 
-## Overview
-
-`tracing` is the de-facto standard for instrumentation in the Rust ecosystem. `defmt` is the gold standard for high-efficiency logging on embedded devices.
-
-However, using `tracing` with a subscriber on embedded systems often forces a compromise:
-1.  **Type Erasure**: `tracing` erases types into `dyn Value`, forcing the subscriber to use `fmt::Debug`.
-2.  **Formatting on Device**: To log these erased values, one must typically use `defmt::Debug2Format`, which performs formatting on the device, negating `defmt`'s bandwidth and size savings.
-
-`tracing-defmt` resolves this by providing macros that **look** like `tracing` macros but **expand** to `defmt` macros at compile time. This allows you to write code using the familiar `tracing` API while enjoying the full efficiency of `defmt`.
+Export just the trace and log data with [defmt](https://github.com/knurling-rs/defmt) and reconstruct the full traces on a host or on a connected server to export as OpenTelemetry for production observability.
 
 ## Architecture
 
