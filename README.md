@@ -1,6 +1,6 @@
 # tracing-defmt
 
-![CI](https://github.com/tracing-defmt/tracing-defmt/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/bryanmehall/tracing-defmt/actions/workflows/ci.yml/badge.svg)
 
 A **syntax-compatible** facade for [tracing](https://github.com/tokio-rs/tracing) that outputs directly to [defmt](https://github.com/knurling-rs/defmt).
 
