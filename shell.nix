@@ -7,7 +7,7 @@ let
     overlays = [ (import sources.rust-overlay) ];
   };
 
-  rustToolchain = pkgsWithOverlay.rust-bin.stable.latest.default.override {
+  rustToolchain = pkgsWithOverlay.rust-bin.stable."1.93.0".default.override {
     extensions = [ "rust-src" ];
   };
 in
