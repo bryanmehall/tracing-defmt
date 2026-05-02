@@ -8,6 +8,8 @@
 pub use defmt;
 pub use tracing_defmt_macros::{debug, error, info, instrument, trace, warn};
 
+pub mod context;
+
 /// Wrapper types to support `tracing::field::debug` and `tracing::field::display`.
 pub mod field {
     /// A wrapper that implements `defmt::Format` using `core::fmt::Debug`.
@@ -82,25 +84,61 @@ macro_rules! event {
     };
 }
 
-/// A dummy Span to satisfy the tracing API.
-///
-/// `defmt` does not natively support nested spans with attached key-value pairs
-/// in the same way `tracing` does. This struct allows code that creates spans
-/// to compile, but span context is currently not propagated or logged.
-#[derive(Clone, Debug, Default)]
-pub struct Span;
+/// A Span to satisfy the tracing API and track contexts.
+#[derive(Clone, Debug)]
+pub struct Span {
+    pub context: Option<crate::context::TraceContext>,
+    pub name: &'static str,
+}
 
 impl Span {
-    pub const fn none() -> Self {
-        Span
+    pub fn none() -> Self {
+        Span {
+            context: None,
+            name: "none",
+        }
     }
 
     pub fn current() -> Self {
-        Span
+        Span {
+            context: crate::context::get_active(),
+            name: "current",
+        }
+    }
+
+    pub fn new(name: &'static str) -> Self {
+        let parent = crate::context::get_active();
+        let context = match parent {
+            Some(p) => p.child(),
+            None => crate::context::TraceContext::new_root(),
+        };
+        Span {
+            context: Some(context),
+            name,
+        }
     }
 
     pub fn enter(&self) -> Entered {
-        Entered
+        if let Some(ctx) = self.context {
+            defmt::info!(
+                "ctx={=[u8;16]}:{=[u8;8]} parent={=[u8;8]} span_enter: {=str}",
+                ctx.trace_id,
+                ctx.span_id,
+                ctx.parent_span_id,
+                self.name
+            );
+            Entered {
+                _guard: Some(crate::context::EnterGuard::new(ctx)),
+                context: Some(ctx),
+                name: self.name,
+            }
+        } else {
+            Entered {
+                _guard: None,
+                context: None,
+                name: self.name,
+            }
+        }
     }
 
     pub fn record(&self, _field: &str, _value: &dyn core::fmt::Debug) -> &Self {
@@ -112,30 +150,45 @@ impl Span {
     }
 
     pub fn is_none(&self) -> bool {
-        false
+        self.context.is_none()
     }
 
     pub fn in_scope<F, T>(&self, f: F) -> T
     where
         F: FnOnce() -> T,
     {
+        let _entered = self.enter();
         f()
     }
 }
 
-pub struct Entered;
+pub struct Entered {
+    _guard: Option<crate::context::EnterGuard>,
+    context: Option<crate::context::TraceContext>,
+    name: &'static str,
+}
 
 impl Drop for Entered {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        if let Some(ctx) = self.context {
+            defmt::info!(
+                "ctx={=[u8;16]}:{=[u8;8]} parent={=[u8;8]} span_exit: {=str}",
+                ctx.trace_id,
+                ctx.span_id,
+                ctx.parent_span_id,
+                self.name
+            );
+        }
+    }
 }
 
 #[macro_export]
 macro_rules! span {
-    (target: $target:expr, $lvl:expr, $($args:tt)*) => {
-        $crate::Span
+    (target: $target:expr, $lvl:expr, $name:expr $(, $($args:tt)*)?) => {
+        $crate::Span::new($name)
     };
-    ($lvl:expr, $($args:tt)*) => {
-        $crate::Span
+    ($lvl:expr, $name:expr $(, $($args:tt)*)?) => {
+        $crate::Span::new($name)
     };
 }
 

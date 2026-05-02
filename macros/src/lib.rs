@@ -88,7 +88,7 @@ pub fn instrument(args: TokenStream, item: TokenStream) -> TokenStream {
                 let arg_name = pat_ident.ident.to_string();
                 if !skip.contains(&arg_name) {
                     if first {
-                        fmt_str.push_str("(");
+                        fmt_str.push('(');
                         first = false;
                     } else {
                         fmt_str.push_str(", ");
@@ -107,24 +107,81 @@ pub fn instrument(args: TokenStream, item: TokenStream) -> TokenStream {
         fmt_str.push(')');
     }
 
+    let fmt_str_with_ctx = format!(
+        "ctx={{=[u8;16]}}:{{=[u8;8]}} parent={{=[u8;8]}} {}",
+        fmt_str
+    );
+    let exit_fmt_str = format!(
+        "ctx={{=[u8;16]}}:{{=[u8;8]}} parent={{=[u8;8]}} span_exit: {}",
+        name
+    );
+
     let block = &item_fn.block;
     let attrs = &item_fn.attrs;
     let vis = &item_fn.vis;
     let sig = &item_fn.sig;
+    let is_async = sig.asyncness.is_some();
 
-    let expanded = quote! {
-        #(#attrs)*
-        #vis #sig {
-            #macro_path!(#fmt_str, #(#log_args),*);
-            struct DefmtInstrumentGuard;
-            impl Drop for DefmtInstrumentGuard {
-                fn drop(&mut self) {
-                    // We emit "span_exit: name" to allow matching exit events
-                    #macro_path!("span_exit: {}", #name);
-                }
+    let expanded = if is_async {
+        quote! {
+            #(#attrs)*
+            #vis #sig {
+                let __parent_ctx = ::tracing_defmt::context::get_active();
+                let __ctx = match __parent_ctx {
+                    Some(p) => p.child(),
+                    None => ::tracing_defmt::context::TraceContext::new_root(),
+                };
+
+                #macro_path!(
+                    #fmt_str_with_ctx,
+                    __ctx.trace_id,
+                    __ctx.span_id,
+                    __ctx.parent_span_id,
+                    #(#log_args),*
+                );
+
+                let __future = async move {
+                    let __result = { #block };
+                    let __exit_ctx = ::tracing_defmt::context::get_active().unwrap_or(__ctx);
+                    #macro_path!(#exit_fmt_str, __exit_ctx.trace_id, __exit_ctx.span_id, __exit_ctx.parent_span_id);
+                    __result
+                };
+
+                ::tracing_defmt::context::Instrument::instrument(__future, __ctx)
             }
-            let _guard = DefmtInstrumentGuard;
-            #block
+        }
+    } else {
+        quote! {
+            #(#attrs)*
+            #vis #sig {
+                let __parent_ctx = ::tracing_defmt::context::get_active();
+                let __ctx = match __parent_ctx {
+                    Some(p) => p.child(),
+                    None => ::tracing_defmt::context::TraceContext::new_root(),
+                };
+
+                let _guard = ::tracing_defmt::context::EnterGuard::new(__ctx);
+
+                #macro_path!(
+                    #fmt_str_with_ctx,
+                    __ctx.trace_id,
+                    __ctx.span_id,
+                    __ctx.parent_span_id,
+                    #(#log_args),*
+                );
+
+                struct DefmtInstrumentExitGuard {
+                    ctx: ::tracing_defmt::context::TraceContext,
+                }
+                impl Drop for DefmtInstrumentExitGuard {
+                    fn drop(&mut self) {
+                        #macro_path!(#exit_fmt_str, self.ctx.trace_id, self.ctx.span_id, self.ctx.parent_span_id);
+                    }
+                }
+                let _exit_guard = DefmtInstrumentExitGuard { ctx: __ctx };
+
+                #block
+            }
         }
     };
 
@@ -243,8 +300,14 @@ fn impl_log_macro(level: &str, args: TokenStream) -> TokenStream {
         final_args.push(val);
     }
 
+    let with_ctx_str = format!("ctx={{=[u8;16]}}:{{=[u8;8]}} {}", final_fmt_str);
+
     quote! {
-        #macro_path!(#final_fmt_str, #(#final_args),*)
+        if let Some(__ctx) = ::tracing_defmt::context::get_active() {
+            #macro_path!(#with_ctx_str, __ctx.trace_id, __ctx.span_id, #(#final_args),*)
+        } else {
+            #macro_path!(#final_fmt_str, #(#final_args),*)
+        }
     }
     .into()
 }

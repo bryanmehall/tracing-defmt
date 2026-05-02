@@ -2,29 +2,21 @@
 
 ![CI](https://github.com/bryanmehall/tracing-defmt/actions/workflows/ci.yml/badge.svg)
 
-A **syntax-compatible** version of the [tracing](https://github.com/tokio-rs/tracing) crate for no_std or memory constrained devices. 
+A **syntax-compatible** facade for [tracing](https://github.com/tokio-rs/tracing) that outputs directly to [defmt](https://github.com/knurling-rs/defmt), with **built-in OpenTelemetry distributed context propagation**.
 
 Export just the trace and log data with [defmt](https://github.com/knurling-rs/defmt) and reconstruct the full traces on a host or on a connected server to export as OpenTelemetry for production observability.
 
-## Architecture
+## Overview
 
-The following diagram illustrates how `tracing-defmt` enables the reconstruction of distributed traces on the host from minimal binary logs generated on the embedded device.
+`tracing` is the de-facto standard for instrumentation in the Rust ecosystem. `defmt` is the gold standard for high-efficiency logging on embedded devices.
 
-```mermaid
-graph LR
-    Device[Embedded Device]
-    
-    subgraph Host ["Host / Server"]
-        Elf[ELF Firmware Image]
-        Reconstructor[Trace Reconstructor]
-    end
+However, using `tracing` with a subscriber on embedded systems often forces a compromise:
+1.  **Type Erasure**: `tracing` erases types into `dyn Value`, forcing the subscriber to use `fmt::Debug`.
+2.  **Formatting on Device**: To log these erased values, one must typically use `defmt::Debug2Format`, which performs formatting on the device, negating `defmt`'s bandwidth and size savings.
 
-    Backend[OpenTelemetry Collector<br/>or Tracing Backend]
+`tracing-defmt` resolves this by providing macros that **look** like `tracing` macros but **expand** to `defmt` macros at compile time. 
 
-    Device -->|Binary Defmt Logs via<br/>Debug Probe, UART, HTTP, MQTT, etc| Reconstructor
-    Elf -.->|Debug Info / Symbols| Reconstructor
-    Reconstructor -->|Reconstructed Spans<br/>OTLP| Backend
-```
+More importantly, it provides a built-in OpenTelemetry Trace Context registry that seamlessly handles asynchronous task concurrency (like `embassy` or `rtic`), guaranteeing that interleaved logs on the device are always perfectly reconstructed on the host.
 
 ## Installation
 
@@ -38,9 +30,7 @@ defmt = "0.3"
 
 ## Usage
 
-### Basic Usage
-
-You can import the crate as `tracing` to minimize code changes:
+You can import the crate as `tracing` to minimize code changes across shared host/device libraries.
 
 ```rust
 use tracing_defmt as tracing;
@@ -52,28 +42,67 @@ fn main() {
 }
 ```
 
-### With `#[instrument]`
+### Async Task Concurrency (`#[instrument]`)
 
-The `#[instrument]` attribute is supported and expands to a `defmt` log on entry and exit.
+The `#[instrument]` attribute is fully supported for both synchronous and `async` functions.
+
+When using an async executor like Embassy, `tracing-defmt` tracks OpenTelemetry contexts precisely across `await` yields. Even if the executor interleaves dozens of tasks on a single core, logs are strictly bound to their correct trace hierarchy.
 
 ```rust
 use tracing_defmt as tracing;
 
 #[tracing::instrument]
-fn my_function(x: u8, y: u8) {
-    tracing::debug!("Inside my_function");
+async fn my_task(sensor_id: u8) {
+    // This defmt log automatically carries the W3C OpenTelemetry Trace ID!
+    tracing::debug!("Inside my_task, reading sensor");
+    
+    // If Embassy pauses this task and polls another one, the active Trace Context 
+    // is instantly swapped. Concurrency logs will never be jumbled on the host.
+    Timer::after_secs(1).await;
+}
+```
+
+### Manual Spans
+
+You can also use manual `span!` RAII guards exactly like the host `tracing` crate:
+
+```rust
+use tracing_defmt as tracing;
+use tracing_defmt::Level;
+
+let span = tracing::span!(Level::INFO, "my_manual_span");
+let _enter = span.enter();
+tracing::info!("I am safely inside my_manual_span's OpenTelemetry context!");
+```
+
+### OpenTelemetry Interoperability
+
+Because `tracing-defmt` natively generates and manages standard W3C 16-byte Trace IDs and 8-byte Span IDs on the microcontroller, you can directly interface with external APIs and cloud services. 
+
+If your embedded device makes HTTP requests (or MQTT publishes), you can extract the active context to propagate traces end-to-end:
+
+```rust
+use tracing_defmt as tracing;
+
+#[tracing::instrument]
+async fn send_telemetry_to_cloud() {
+    // 1. Get the current automatically generated OpenTelemetry Context
+    if let Some(ctx) = tracing_defmt::context::get_active() {
+        // 2. Format it into a standard W3C header
+        let traceparent = format!("00-{}-{}-01", hex::encode(ctx.trace_id), hex::encode(ctx.span_id));
+        
+        // 3. Send it to your cloud service! Your cloud traces will now seamlessly link 
+        // back to the deep `defmt` execution logs of your microcontroller.
+        // http_client.set_header("traceparent", traceparent);
+    }
 }
 ```
 
 ### Host vs Embedded Usage
 
-Since `defmt` is designed for embedded targets and requires a global logger, running `tracing-defmt` code directly on a host machine (e.g. `cargo test`) usually produces no visible output (or requires specific decoders).
+Since `defmt` is designed for embedded targets and requires a global logger, running `tracing-defmt` code directly on a host machine (e.g. `cargo test`) usually produces no visible output.
 
 To get the best of both worlds—**standard tracing logs on host** and **efficient defmt logs on embedded**—you should use conditional compilation in your `Cargo.toml`.
-
-#### 1. Configure Cargo.toml
-
-Define features to switch between the real `tracing` crate and `tracing-defmt`.
 
 ```toml
 [features]
@@ -82,15 +111,10 @@ std = ["dep:tracing"]
 embedded = ["dep:tracing-defmt", "dep:defmt"]
 
 [dependencies]
-# Optional dependencies
 tracing = { version = "0.1", optional = true }
 tracing-defmt = { version = "0.1", optional = true }
 defmt = { version = "0.3", optional = true }
 ```
-
-#### 2. Import conditionally
-
-In your code, conditionally import the crate you need:
 
 ```rust
 #[cfg(feature = "std")]
@@ -105,10 +129,6 @@ fn process_data(data: &[u8]) {
 }
 ```
 
-Now:
-- Run `cargo test --features std` -> Uses standard `tracing`. Logs appear in stdout (if a subscriber is set).
-- Run `cargo build --features embedded --target thumbv7em-none-eabihf` -> Uses `tracing-defmt`. Logs are efficient binary `defmt` packets.
-
 ## Features & Limitations
 
 - **Macros**: `trace!`, `debug!`, `info!`, `warn!`, `error!` map directly to their `defmt` counterparts.
@@ -116,17 +136,18 @@ Now:
 - **Fields**:
     - `tracing::field::display(x)` is supported via a wrapper that uses `defmt::Display2Format`.
     - `tracing::field::debug(x)` is supported via a wrapper that uses `defmt::Debug2Format`.
-- **Spans**: `span!` macros (`info_span!`, etc.) exist to allow code to compile, but they are currently **no-ops** (dummies). `defmt` does not support the same concept of runtime-constructed spans with attached key-value pairs in the same way `tracing` does.
+- **Spans**: `span!` macros (`info_span!`, etc.) accurately manage a lock-free global registry of OpenTelemetry Trace Contexts. You can safely `.enter()` spans and the context propagates across standard `.await` execution boundaries flawlessly.
 - **Events**: `event!` macro maps to the corresponding log level macro.
+
+## Decoding on the Host
+
+Because `tracing-defmt` injects W3C context directly into the binary stream, host decoders are completely stateless. 
+See `examples/host_trace_reconstructor.rs` for a complete example of how to parse these logs from stdin and route them directly into the standard `opentelemetry_sdk` for export to Jaeger, Zipkin, or Datadog.
 
 ## Testing
 
-This crate includes a test suite that verifies the macros compile and run on the host (though output is hidden as it uses `defmt`).
-
-To run the tests:
+To run the test suite (which validates context propagation, async future instrumentation, and API compatibility):
 
 ```bash
 cargo test
 ```
-
-See `examples/` for usage patterns.

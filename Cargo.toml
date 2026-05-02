@@ -1,13 +1,18 @@
+[workspace]
+
 [package]
 name = "tracing-defmt"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+critical-section = "1.2.0"
 defmt = "1.0"
+pin-project-lite = "0.2.17"
 tracing-defmt-macros = { path = "macros" }
 
 [dev-dependencies]
+critical-section = { version = "1.2", features = ["std"] }
 defmt = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -17,3 +22,4 @@ tracing-opentelemetry = "0.28"
 opentelemetry-stdout = { version = "0.27", features = ["trace"] }
 tokio = { version = "1", features = ["full"] }
 tracing-fluent-assertions = "0.3.0"
+hex = "0.4.3"
