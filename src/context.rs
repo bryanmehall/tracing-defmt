@@ -14,11 +14,20 @@ pub struct TraceContext {
     pub trace_flags: u8,
 }
 
-// A zero-allocation global registry.
+// A zero-allocation global registry. 
 // Cell allows mutability inside the Mutex without &mut references.
 static ACTIVE_CONTEXT: Mutex<Cell<Option<TraceContext>>> = Mutex::new(Cell::new(None));
 static NEXT_TRACE_ID: Mutex<Cell<u64>> = Mutex::new(Cell::new(1));
 static NEXT_SPAN_ID: Mutex<Cell<u64>> = Mutex::new(Cell::new(1));
+static SEED: Mutex<Cell<u64>> = Mutex::new(Cell::new(0));
+
+/// Initialize the TraceId counter with a hardware-specific random seed.
+/// This prevents TraceId collisions across reboots.
+pub fn init(seed: u64) {
+    critical_section::with(|cs| {
+        SEED.borrow(cs).set(seed);
+    });
+}
 
 impl TraceContext {
     pub fn new_root() -> Self {
@@ -29,7 +38,10 @@ impl TraceContext {
             val
         });
 
+        let seed = critical_section::with(|cs| SEED.borrow(cs).get());
+
         let mut trace_id = [0u8; 16];
+        trace_id[..8].copy_from_slice(&seed.to_be_bytes());
         trace_id[8..].copy_from_slice(&trace_id_half.to_be_bytes());
 
         let span_id_val = critical_section::with(|cs| {
@@ -64,11 +76,23 @@ impl TraceContext {
     }
 }
 
-/// Gets the currently active TraceContext, if any.
-pub fn get_active() -> Option<TraceContext> {
-    critical_section::with(|cs| ACTIVE_CONTEXT.borrow(cs).get())
+#[cfg(feature = "cortex-m")]
+fn is_in_isr() -> bool {
+    cortex_m::register::ipsr::read() != 0
 }
 
+#[cfg(not(feature = "cortex-m"))]
+fn is_in_isr() -> bool {
+    false
+}
+
+/// Gets the currently active TraceContext, if any.
+pub fn get_active() -> Option<TraceContext> {
+    if is_in_isr() {
+        return None;
+    }
+    critical_section::with(|cs| ACTIVE_CONTEXT.borrow(cs).get())
+}
 /// Sets the currently active TraceContext, returning the previous one.
 pub(crate) fn set_active(ctx: Option<TraceContext>) -> Option<TraceContext> {
     critical_section::with(|cs| {

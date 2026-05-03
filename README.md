@@ -131,6 +131,8 @@ fn process_data(data: &[u8]) {
 
 ## Features & Limitations
 
+- **TraceId Entropy**: You can optionally call `tracing_defmt::context::init(seed)` with a hardware-specific random seed (e.g., from a TRNG or Flash UID) on boot. This seeds the upper 8 bytes of the generated W3C Trace IDs, ensuring global uniqueness and preventing trace collisions across device reboots in your cloud backend.
+- **ISR Pollution Prevention**: If you enable the `cortex-m` Cargo feature, `tracing-defmt` will automatically read the ARM `IPSR` register. If a hardware interrupt fires and logs an event, it will cleanly bypass the active application task's Trace Context, preventing lower-level hardware events from falsely polluting higher-level HTTP/MQTT spans.
 - **Macros**: `trace!`, `debug!`, `info!`, `warn!`, `error!` map directly to their `defmt` counterparts.
 - **Attributes**: `#[instrument]` is supported. Arguments must implement `defmt::Format`.
 - **Fields**:

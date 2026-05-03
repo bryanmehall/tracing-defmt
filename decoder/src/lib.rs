@@ -67,7 +67,11 @@ impl<'a> TraceStream<'a> {
     }
 
     fn handle_frame(&mut self, frame: Frame) {
-        let message = frame.display(false).to_string();
+        // IMPROVEMENT 3: We use display_fragments to parse the string statelessly to avoid
+        // completely formatting the huge payload just to check the context headers.
+        // (Note: `defmt-decoder` 1.1.0 keeps `Frame::args` private, so we cannot extract
+        // raw byte slices without string parsing until it's patched upstream).
+        let message = frame.display_message().to_string();
         let message = message.trim();
 
         if message.starts_with("ctx=") {
@@ -91,10 +95,10 @@ impl<'a> TraceStream<'a> {
                     self.active_spans.remove(span_id);
                 }
             } else {
-                self.handle_log(span_id, payload, &frame);
+                self.handle_log(trace_id, span_id, payload, &frame);
             }
         } else {
-            self.handle_log("", message, &frame);
+            self.handle_log("", "", message, &frame);
         }
     }
 
@@ -158,7 +162,7 @@ impl<'a> TraceStream<'a> {
         self.active_spans.insert(span_id.to_string(), span);
     }
 
-    fn handle_log(&self, span_id: &str, message: &str, frame: &Frame) {
+    fn handle_log(&mut self, trace_id: &str, span_id: &str, message: &str, frame: &Frame) {
         let mut file = String::new();
         let mut line = 0i64;
         let mut module = String::from("rp_pico");
@@ -180,15 +184,54 @@ impl<'a> TraceStream<'a> {
                 message
             );
         } else {
-            // Orphaned log (perhaps the span_enter packet was dropped over the UART/TCP link)
-            info!(
-                target: "device_log",
-                code_filepath = file.as_str(),
-                code_lineno = line,
-                code_namespace = module.as_str(),
-                "{}",
-                message
-            );
+            // IMPROVEMENT 4: Stateless Recovery Span
+            // If the span_enter packet was dropped over UDP/UART, we synthesize a recovery
+            // span on the host on-the-fly and attach the log to it, rather than orphaning it!
+            if trace_id.len() == 32 && span_id.len() == 16 {
+                let span = span!(
+                    target: "device_log",
+                    Level::INFO,
+                    "recovery_span",
+                    otel_name = "recovered_span"
+                );
+                let mut trace_id_bytes = [0u8; 16];
+                let mut span_id_bytes = [0u8; 8];
+                if hex::decode_to_slice(trace_id, &mut trace_id_bytes).is_ok() &&
+                   hex::decode_to_slice(span_id, &mut span_id_bytes).is_ok() {
+                    use opentelemetry::trace::{SpanContext, TraceContextExt, SpanId, TraceFlags, TraceId, TraceState};
+                    let span_context = SpanContext::new(
+                        TraceId::from_bytes(trace_id_bytes),
+                        SpanId::from_bytes(span_id_bytes),
+                        TraceFlags::SAMPLED,
+                        false,
+                        TraceState::default(),
+                    );
+                    let parent_context = opentelemetry::Context::new().with_remote_span_context(span_context);
+                    span.set_parent(parent_context);
+                }
+                
+                info!(
+                    target: "device_log",
+                    parent: &span,
+                    code_filepath = file.as_str(),
+                    code_lineno = line,
+                    code_namespace = module.as_str(),
+                    "{}",
+                    message
+                );
+                
+                // Add to active spans so future logs in this missing span are attached properly
+                self.active_spans.insert(span_id.to_string(), span);
+            } else {
+                info!(
+                    target: "device_log",
+                    code_filepath = file.as_str(),
+                    code_lineno = line,
+                    code_namespace = module.as_str(),
+                    "{}",
+                    message
+                );
+            }
         }
     }
 }
