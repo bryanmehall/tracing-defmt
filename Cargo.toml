@@ -1,4 +1,5 @@
 [workspace]
+members = ["decoder"]
 
 [package]
 name = "tracing-defmt"

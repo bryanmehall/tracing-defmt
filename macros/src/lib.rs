@@ -21,9 +21,9 @@ use syn::{
 /// * `skip` - A list of arguments to skip logging.
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// #[instrument(level = "debug", skip(y))]
-/// fn my_fn(x: u32, y: u32) { ... }
+/// fn my_fn(x: u32, y: u32) { /* ... */ }
 /// ```
 #[proc_macro_attribute]
 pub fn instrument(args: TokenStream, item: TokenStream) -> TokenStream {
