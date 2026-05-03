@@ -5,12 +5,15 @@ members = ["decoder"]
 name = "tracing-defmt"
 version = "0.1.0"
 edition = "2024"
+description = "A syntax-compatible version of the tracing crate for no_std environments"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bryanmehall/tracing-defmt"
 
 [dependencies]
 critical-section = "1.2.0"
 defmt = "1.0"
 pin-project-lite = "0.2.17"
-tracing-defmt-macros = { path = "macros" }
+tracing-defmt-macros = { version = "0.1.0", path = "macros" }
 cortex-m = { version = "0.7", optional = true }
 
 [dev-dependencies]

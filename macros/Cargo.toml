@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Proc-macros for tracing-defmt"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/bryanmehall/tracing-defmt"
 
 [lib]
 proc-macro = true
