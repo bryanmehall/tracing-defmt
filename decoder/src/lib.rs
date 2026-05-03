@@ -75,7 +75,7 @@ impl<'a> TraceStream<'a> {
             let ctx_str = &message[4..space_idx];
             let mut split = ctx_str.split(':');
             
-            let _trace_id = split.next().unwrap_or_default();
+            let trace_id = split.next().unwrap_or_default();
             let span_id = split.next().unwrap_or_default();
             let payload = &message[space_idx + 1..];
 
