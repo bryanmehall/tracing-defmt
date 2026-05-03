@@ -75,7 +75,7 @@ impl<'a> TraceStream<'a> {
             let ctx_str = &message[4..space_idx];
             let mut split = ctx_str.split(':');
             
-            let trace_id = split.next().unwrap_or_default();
+            let _trace_id = split.next().unwrap_or_default();
             let span_id = split.next().unwrap_or_default();
             let payload = &message[space_idx + 1..];
 
@@ -86,7 +86,7 @@ impl<'a> TraceStream<'a> {
 
                 if event_str.starts_with("span_enter: ") {
                     let content = &event_str["span_enter: ".len()..];
-                    self.handle_span_enter(trace_id, span_id, content, &frame);
+                    self.handle_span_enter(span_id, content, &frame);
                 } else if event_str.starts_with("span_exit: ") {
                     self.active_spans.remove(span_id);
                 }
@@ -98,7 +98,7 @@ impl<'a> TraceStream<'a> {
         }
     }
 
-    fn handle_span_enter(&mut self, trace_id: &str, span_id: &str, name: &str, frame: &Frame) {
+    fn handle_span_enter(&mut self, span_id: &str, name: &str, frame: &Frame) {
         let clean_name = if let Some(idx) = name.find("; file=") {
             &name[..idx]
         } else {
@@ -130,24 +130,6 @@ impl<'a> TraceStream<'a> {
             args = args
         );
 
-        if trace_id.len() == 32 && span_id.len() == 16 {
-            let mut trace_id_bytes = [0u8; 16];
-            let mut span_id_bytes = [0u8; 8];
-            if hex::decode_to_slice(trace_id, &mut trace_id_bytes).is_ok() &&
-               hex::decode_to_slice(span_id, &mut span_id_bytes).is_ok() {
-                use opentelemetry::trace::{SpanContext, TraceContextExt, SpanId, TraceFlags, TraceId, TraceState};
-                let span_context = SpanContext::new(
-                    TraceId::from_bytes(trace_id_bytes),
-                    SpanId::from_bytes(span_id_bytes),
-                    TraceFlags::SAMPLED,
-                    false,
-                    TraceState::default(),
-                );
-                let parent_context = opentelemetry::Context::new().with_remote_span_context(span_context);
-                span.set_parent(parent_context);
-            }
-        }
-
         // Set semantic conventions attributes
         span.set_attribute("otel.name", func_name.to_string()); // Override span name
         span.set_attribute("code.function", func_name.to_string());
@@ -158,7 +140,7 @@ impl<'a> TraceStream<'a> {
         self.active_spans.insert(span_id.to_string(), span);
     }
 
-    fn handle_log(&self, span_id: &str, message: &str, frame: &Frame) {
+    fn handle_log(&mut self, span_id: &str, message: &str, frame: &Frame) {
         let mut file = String::new();
         let mut line = 0i64;
         let mut module = String::from("rp_pico");
@@ -170,9 +152,9 @@ impl<'a> TraceStream<'a> {
         }
 
         if let Some(span) = self.active_spans.get(span_id) {
+            let _guard = span.enter();
             info!(
                 target: "device_log",
-                parent: span,
                 code_filepath = file.as_str(),
                 code_lineno = line,
                 code_namespace = module.as_str(),
@@ -180,7 +162,6 @@ impl<'a> TraceStream<'a> {
                 message
             );
         } else {
-            // Orphaned log (perhaps the span_enter packet was dropped over the UART/TCP link)
             info!(
                 target: "device_log",
                 code_filepath = file.as_str(),
@@ -190,5 +171,7 @@ impl<'a> TraceStream<'a> {
                 message
             );
         }
+
+        eprintln!("{}", message);
     }
 }

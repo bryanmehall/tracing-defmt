@@ -1125,7 +1125,9 @@ name = "tracing-defmt-decoder"
 version = "0.1.0"
 dependencies = [
  "defmt-decoder",
+ "hex",
  "log",
+ "opentelemetry",
  "thiserror 2.0.18",
  "tracing",
  "tracing-opentelemetry",
