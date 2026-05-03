@@ -1,6 +1,5 @@
 use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+use std::task::{Context, RawWaker, RawWakerVTable, Waker};
 use tracing_defmt::context::{EnterGuard, Instrument, TraceContext, get_active};
 
 // A dummy waker for polling futures in tests
