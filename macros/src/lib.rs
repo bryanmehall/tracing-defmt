@@ -343,11 +343,11 @@ pub fn error(input: TokenStream) -> TokenStream {
 
 fn level_to_macro_path(level: &str) -> proc_macro2::TokenStream {
     match level {
-        "trace" => quote!(defmt::trace),
-        "debug" => quote!(defmt::debug),
-        "info" => quote!(defmt::info),
-        "warn" => quote!(defmt::warn),
-        "error" => quote!(defmt::error),
-        _ => quote!(defmt::info),
+        "trace" => quote!(::tracing_defmt::defmt::trace),
+        "debug" => quote!(::tracing_defmt::defmt::debug),
+        "info" => quote!(::tracing_defmt::defmt::info),
+        "warn" => quote!(::tracing_defmt::defmt::warn),
+        "error" => quote!(::tracing_defmt::defmt::error),
+        _ => quote!(::tracing_defmt::defmt::info),
     }
 }
