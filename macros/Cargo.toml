@@ -1,6 +1,6 @@
 [package]
 name = "tracing-defmt-macros"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Proc-macros for tracing-defmt"
 license = "MIT OR Apache-2.0"
