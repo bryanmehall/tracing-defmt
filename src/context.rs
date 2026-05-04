@@ -74,6 +74,30 @@ impl TraceContext {
             trace_flags: self.trace_flags,
         }
     }
+
+    pub fn trace_id_high(&self) -> u64 {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&self.trace_id[0..8]);
+        u64::from_be_bytes(buf)
+    }
+
+    pub fn trace_id_low(&self) -> u64 {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&self.trace_id[8..16]);
+        u64::from_be_bytes(buf)
+    }
+
+    pub fn span_id_u64(&self) -> u64 {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&self.span_id);
+        u64::from_be_bytes(buf)
+    }
+
+    pub fn parent_span_id_u64(&self) -> u64 {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&self.parent_span_id);
+        u64::from_be_bytes(buf)
+    }
 }
 
 #[cfg(feature = "cortex-m")]

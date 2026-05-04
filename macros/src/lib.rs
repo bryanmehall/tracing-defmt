@@ -108,11 +108,11 @@ pub fn instrument(args: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     let fmt_str_with_ctx = format!(
-        "ctx={{=[u8;16]}}:{{=[u8;8]}} parent={{=[u8;8]}} {}",
+        "ctx={{:016x}}{{:016x}}:{{:016x}} parent={{:016x}} {}",
         fmt_str
     );
     let exit_fmt_str = format!(
-        "ctx={{=[u8;16]}}:{{=[u8;8]}} parent={{=[u8;8]}} span_exit: {}",
+        "ctx={{:016x}}{{:016x}}:{{:016x}} parent={{:016x}} span_exit: {}",
         name
     );
 
@@ -134,16 +134,23 @@ pub fn instrument(args: TokenStream, item: TokenStream) -> TokenStream {
 
                 #macro_path!(
                     #fmt_str_with_ctx,
-                    __ctx.trace_id,
-                    __ctx.span_id,
-                    __ctx.parent_span_id,
+                    __ctx.trace_id_high(),
+                    __ctx.trace_id_low(),
+                    __ctx.span_id_u64(),
+                    __ctx.parent_span_id_u64(),
                     #(#log_args),*
                 );
 
                 let __future = async move {
                     let __result = { #block };
                     let __exit_ctx = ::tracing_defmt::context::get_active().unwrap_or(__ctx);
-                    #macro_path!(#exit_fmt_str, __exit_ctx.trace_id, __exit_ctx.span_id, __exit_ctx.parent_span_id);
+                    #macro_path!(
+                        #exit_fmt_str,
+                        __exit_ctx.trace_id_high(),
+                        __exit_ctx.trace_id_low(),
+                        __exit_ctx.span_id_u64(),
+                        __exit_ctx.parent_span_id_u64()
+                    );
                     __result
                 };
 
@@ -164,9 +171,10 @@ pub fn instrument(args: TokenStream, item: TokenStream) -> TokenStream {
 
                 #macro_path!(
                     #fmt_str_with_ctx,
-                    __ctx.trace_id,
-                    __ctx.span_id,
-                    __ctx.parent_span_id,
+                    __ctx.trace_id_high(),
+                    __ctx.trace_id_low(),
+                    __ctx.span_id_u64(),
+                    __ctx.parent_span_id_u64(),
                     #(#log_args),*
                 );
 
@@ -175,7 +183,13 @@ pub fn instrument(args: TokenStream, item: TokenStream) -> TokenStream {
                 }
                 impl Drop for DefmtInstrumentExitGuard {
                     fn drop(&mut self) {
-                        #macro_path!(#exit_fmt_str, self.ctx.trace_id, self.ctx.span_id, self.ctx.parent_span_id);
+                        #macro_path!(
+                            #exit_fmt_str,
+                            self.ctx.trace_id_high(),
+                            self.ctx.trace_id_low(),
+                            self.ctx.span_id_u64(),
+                            self.ctx.parent_span_id_u64()
+                        );
                     }
                 }
                 let _exit_guard = DefmtInstrumentExitGuard { ctx: __ctx };
@@ -300,11 +314,18 @@ fn impl_log_macro(level: &str, args: TokenStream) -> TokenStream {
         final_args.push(val);
     }
 
-    let with_ctx_str = format!("ctx={{=[u8;16]}}:{{=[u8;8]}} {}", final_fmt_str);
+    let with_ctx_str = format!("ctx={{:016x}}{{:016x}}:{{:016x}} parent={{:016x}} {}", final_fmt_str);
 
     quote! {
         if let Some(__ctx) = ::tracing_defmt::context::get_active() {
-            #macro_path!(#with_ctx_str, __ctx.trace_id, __ctx.span_id, #(#final_args),*)
+            #macro_path!(
+                #with_ctx_str,
+                __ctx.trace_id_high(),
+                __ctx.trace_id_low(),
+                __ctx.span_id_u64(),
+                __ctx.parent_span_id_u64(),
+                #(#final_args),*
+            )
         } else {
             #macro_path!(#final_fmt_str, #(#final_args),*)
         }

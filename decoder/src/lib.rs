@@ -74,31 +74,18 @@ impl<'a> TraceStream<'a> {
         if let Some(defmt_parser::Fragment::Literal(lit)) = fragments.first() {
             if lit == "ctx=" {
                 let _ctx_lit = display_fragments.next(); // "ctx="
-                let trace_id_str = display_fragments.next().unwrap_or_default(); // trace_id
+                let trace_id_high = display_fragments.next().unwrap_or_default(); 
+                let trace_id_low = display_fragments.next().unwrap_or_default(); 
                 let _colon = display_fragments.next(); // ":"
-                let span_id_str = display_fragments.next().unwrap_or_default(); // span_id
+                let span_id_str = display_fragments.next().unwrap_or_default(); 
                 let parent_lit = display_fragments.next().unwrap_or_default(); // " parent="
                 
                 if parent_lit == " parent=" {
-                    let _parent_span_id_str = display_fragments.next().unwrap_or_default(); // parent_span_id
-                    let event_type_lit = display_fragments.next().unwrap_or_default(); // " span_enter: " or " span_exit: " or " "
+                    let _parent_span_id_str = display_fragments.next().unwrap_or_default(); 
+                    let event_type_lit = display_fragments.next().unwrap_or_default(); 
 
-                    let trace_id_bytes: Vec<u8> = trace_id_str
-                        .trim_start_matches('[')
-                        .trim_end_matches(']')
-                        .split(',')
-                        .filter_map(|s| s.trim().parse::<u8>().ok())
-                        .collect();
-
-                    let span_id_bytes: Vec<u8> = span_id_str
-                        .trim_start_matches('[')
-                        .trim_end_matches(']')
-                        .split(',')
-                        .filter_map(|s| s.trim().parse::<u8>().ok())
-                        .collect();
-
-                    let trace_id_hex = hex::encode(&trace_id_bytes);
-                    let span_id_hex = hex::encode(&span_id_bytes);
+                    let trace_id_hex = format!("{}{}", trace_id_high, trace_id_low);
+                    let span_id_hex = span_id_str;
 
                     if event_type_lit == " span_enter: " {
                         let content = display_fragments.next().unwrap_or_default();
@@ -111,7 +98,7 @@ impl<'a> TraceStream<'a> {
                         while let Some(frag) = display_fragments.next() {
                             payload.push_str(&frag);
                         }
-                        self.handle_log(&span_id_hex, &payload, &frame);
+                        self.handle_log(&trace_id_hex, &span_id_hex, &payload, &frame);
                     }
                 }
                 return;
@@ -120,7 +107,7 @@ impl<'a> TraceStream<'a> {
 
         // Normal defmt log without ctx
         let message = frame.display_message().to_string();
-        self.handle_log("", &message, &frame);
+        self.handle_log("", "", &message, &frame);
     }
 
     fn handle_span_enter(&mut self, trace_id: &str, span_id: &str, name: &str, frame: &Frame) {
@@ -181,7 +168,7 @@ impl<'a> TraceStream<'a> {
         self.active_spans.insert(span_id.to_string(), span);
     }
 
-    fn handle_log(&self, span_id: &str, message: &str, frame: &Frame) {
+    fn handle_log(&mut self, trace_id: &str, span_id: &str, message: &str, frame: &Frame) {
         let mut file = String::new();
         let mut line = 0i64;
         let mut module = String::from("rp_pico");
@@ -203,14 +190,51 @@ impl<'a> TraceStream<'a> {
                 message
             );
         } else {
-            info!(
-                target: "device_log",
-                code_filepath = file.as_str(),
-                code_lineno = line,
-                code_namespace = module.as_str(),
-                "{}",
-                message
-            );
+            // Stateless Recovery Span logic
+            if trace_id.len() == 32 && span_id.len() == 16 {
+                let span = span!(
+                    target: "device_log",
+                    Level::INFO,
+                    "recovery_span",
+                    otel_name = "recovered_span"
+                );
+                let mut trace_id_bytes = [0u8; 16];
+                let mut span_id_bytes = [0u8; 8];
+                if hex::decode_to_slice(trace_id, &mut trace_id_bytes).is_ok() &&
+                   hex::decode_to_slice(span_id, &mut span_id_bytes).is_ok() {
+                    use opentelemetry::trace::{SpanContext, TraceContextExt, SpanId, TraceFlags, TraceId, TraceState};
+                    let span_context = SpanContext::new(
+                        TraceId::from_bytes(trace_id_bytes),
+                        SpanId::from_bytes(span_id_bytes),
+                        TraceFlags::SAMPLED,
+                        false,
+                        TraceState::default(),
+                    );
+                    let parent_context = opentelemetry::Context::new().with_remote_span_context(span_context);
+                    span.set_parent(parent_context);
+                }
+                
+                info!(
+                    target: "device_log",
+                    parent: &span,
+                    code_filepath = file.as_str(),
+                    code_lineno = line,
+                    code_namespace = module.as_str(),
+                    "{}",
+                    message
+                );
+                
+                self.active_spans.insert(span_id.to_string(), span);
+            } else {
+                info!(
+                    target: "device_log",
+                    code_filepath = file.as_str(),
+                    code_lineno = line,
+                    code_namespace = module.as_str(),
+                    "{}",
+                    message
+                );
+            }
         }
     }
 }

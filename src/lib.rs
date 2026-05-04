@@ -172,10 +172,11 @@ impl Drop for Entered {
     fn drop(&mut self) {
         if let Some(ctx) = self.context {
             defmt::info!(
-                "ctx={=[u8;16]}:{=[u8;8]} parent={=[u8;8]} span_exit: {=str}",
-                ctx.trace_id,
-                ctx.span_id,
-                ctx.parent_span_id,
+                "ctx={:016x}{:016x}:{:016x} parent={:016x} span_exit: {=str}",
+                ctx.trace_id_high(),
+                ctx.trace_id_low(),
+                ctx.span_id_u64(),
+                ctx.parent_span_id_u64(),
                 self.name
             );
         }

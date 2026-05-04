@@ -1179,7 +1179,7 @@ dependencies = [
 
 [[package]]
 name = "tracing-defmt"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cortex-m",
  "critical-section",
@@ -1200,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "tracing-defmt-decoder"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "defmt-decoder",
  "defmt-parser",
@@ -1214,7 +1214,7 @@ dependencies = [
 
 [[package]]
 name = "tracing-defmt-macros"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "proc-macro2",
  "quote",
