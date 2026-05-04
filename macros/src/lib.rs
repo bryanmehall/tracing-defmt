@@ -147,7 +147,7 @@ pub fn instrument(args: TokenStream, item: TokenStream) -> TokenStream {
                     __result
                 };
 
-                ::tracing_defmt::context::Instrument::instrument(__future, __ctx)
+                ::tracing_defmt::context::Instrument::instrument(__future, __ctx).await
             }
         }
     } else {

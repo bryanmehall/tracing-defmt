@@ -2,6 +2,7 @@ use defmt_decoder::{DecodeError, Frame, Location, StreamDecoder, Table};
 use std::collections::{BTreeMap, HashMap};
 use tracing::{info, span, Level, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
+use opentelemetry::trace::{SpanContext, SpanId, TraceFlags, TraceId, TraceState, TraceContextExt};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -29,7 +30,7 @@ impl TraceDecoder {
         Ok(Self { table, locations })
     }
 
-    pub fn new_stream(&self) -> TraceStream<'_> {
+    pub fn new_stream(&self) -> TraceStream {
         let stream_decoder = self.table.new_stream_decoder();
         TraceStream {
             parent: self,
@@ -67,39 +68,59 @@ impl<'a> TraceStream<'a> {
     }
 
     fn handle_frame(&mut self, frame: Frame) {
-        // IMPROVEMENT 3: We use display_fragments to parse the string statelessly to avoid
-        // completely formatting the huge payload just to check the context headers.
-        // (Note: `defmt-decoder` 1.1.0 keeps `Frame::args` private, so we cannot extract
-        // raw byte slices without string parsing until it's patched upstream).
-        let message = frame.display_message().to_string();
-        let message = message.trim();
+        let fragments = frame.fragments();
+        let mut display_fragments = frame.display_fragments();
 
-        if message.starts_with("ctx=") {
-            let space_idx = message.find(' ').unwrap_or(message.len());
-            let ctx_str = &message[4..space_idx];
-            let mut split = ctx_str.split(':');
-            
-            let trace_id = split.next().unwrap_or_default();
-            let span_id = split.next().unwrap_or_default();
-            let payload = &message[space_idx + 1..];
+        if let Some(defmt_parser::Fragment::Literal(lit)) = fragments.first() {
+            if lit == "ctx=" {
+                let _ctx_lit = display_fragments.next(); // "ctx="
+                let trace_id_str = display_fragments.next().unwrap_or_default(); // trace_id
+                let _colon = display_fragments.next(); // ":"
+                let span_id_str = display_fragments.next().unwrap_or_default(); // span_id
+                let parent_lit = display_fragments.next().unwrap_or_default(); // " parent="
+                
+                if parent_lit == " parent=" {
+                    let _parent_span_id_str = display_fragments.next().unwrap_or_default(); // parent_span_id
+                    let event_type_lit = display_fragments.next().unwrap_or_default(); // " span_enter: " or " span_exit: " or " "
 
-            if payload.starts_with("parent=") {
-                let parent_space_idx = payload.find(' ').unwrap_or(payload.len());
-                let _parent_id = &payload[7..parent_space_idx];
-                let event_str = &payload[parent_space_idx + 1..];
+                    let trace_id_bytes: Vec<u8> = trace_id_str
+                        .trim_start_matches('[')
+                        .trim_end_matches(']')
+                        .split(',')
+                        .filter_map(|s| s.trim().parse::<u8>().ok())
+                        .collect();
 
-                if event_str.starts_with("span_enter: ") {
-                    let content = &event_str["span_enter: ".len()..];
-                    self.handle_span_enter(trace_id, span_id, content, &frame);
-                } else if event_str.starts_with("span_exit: ") {
-                    self.active_spans.remove(span_id);
+                    let span_id_bytes: Vec<u8> = span_id_str
+                        .trim_start_matches('[')
+                        .trim_end_matches(']')
+                        .split(',')
+                        .filter_map(|s| s.trim().parse::<u8>().ok())
+                        .collect();
+
+                    let trace_id_hex = hex::encode(&trace_id_bytes);
+                    let span_id_hex = hex::encode(&span_id_bytes);
+
+                    if event_type_lit == " span_enter: " {
+                        let content = display_fragments.next().unwrap_or_default();
+                        self.handle_span_enter(&trace_id_hex, &span_id_hex, &content, &frame);
+                    } else if event_type_lit == " span_exit: " {
+                        self.active_spans.remove(&span_id_hex);
+                    } else {
+                        // It's a normal log!
+                        let mut payload = String::new();
+                        while let Some(frag) = display_fragments.next() {
+                            payload.push_str(&frag);
+                        }
+                        self.handle_log(&span_id_hex, &payload, &frame);
+                    }
                 }
-            } else {
-                self.handle_log(trace_id, span_id, payload, &frame);
+                return;
             }
-        } else {
-            self.handle_log("", "", message, &frame);
         }
+
+        // Normal defmt log without ctx
+        let message = frame.display_message().to_string();
+        self.handle_log("", &message, &frame);
     }
 
     fn handle_span_enter(&mut self, trace_id: &str, span_id: &str, name: &str, frame: &Frame) {
@@ -139,7 +160,6 @@ impl<'a> TraceStream<'a> {
             let mut span_id_bytes = [0u8; 8];
             if hex::decode_to_slice(trace_id, &mut trace_id_bytes).is_ok() &&
                hex::decode_to_slice(span_id, &mut span_id_bytes).is_ok() {
-                use opentelemetry::trace::{SpanContext, TraceContextExt, SpanId, TraceFlags, TraceId, TraceState};
                 let span_context = SpanContext::new(
                     TraceId::from_bytes(trace_id_bytes),
                     SpanId::from_bytes(span_id_bytes),
@@ -152,8 +172,7 @@ impl<'a> TraceStream<'a> {
             }
         }
 
-        // Set semantic conventions attributes
-        span.set_attribute("otel.name", func_name.to_string()); // Override span name
+        span.set_attribute("otel.name", func_name.to_string()); 
         span.set_attribute("code.function", func_name.to_string());
         span.set_attribute("code.filepath", file);
         span.set_attribute("code.lineno", line);
@@ -162,7 +181,7 @@ impl<'a> TraceStream<'a> {
         self.active_spans.insert(span_id.to_string(), span);
     }
 
-    fn handle_log(&mut self, trace_id: &str, span_id: &str, message: &str, frame: &Frame) {
+    fn handle_log(&self, span_id: &str, message: &str, frame: &Frame) {
         let mut file = String::new();
         let mut line = 0i64;
         let mut module = String::from("rp_pico");
@@ -184,54 +203,14 @@ impl<'a> TraceStream<'a> {
                 message
             );
         } else {
-            // IMPROVEMENT 4: Stateless Recovery Span
-            // If the span_enter packet was dropped over UDP/UART, we synthesize a recovery
-            // span on the host on-the-fly and attach the log to it, rather than orphaning it!
-            if trace_id.len() == 32 && span_id.len() == 16 {
-                let span = span!(
-                    target: "device_log",
-                    Level::INFO,
-                    "recovery_span",
-                    otel_name = "recovered_span"
-                );
-                let mut trace_id_bytes = [0u8; 16];
-                let mut span_id_bytes = [0u8; 8];
-                if hex::decode_to_slice(trace_id, &mut trace_id_bytes).is_ok() &&
-                   hex::decode_to_slice(span_id, &mut span_id_bytes).is_ok() {
-                    use opentelemetry::trace::{SpanContext, TraceContextExt, SpanId, TraceFlags, TraceId, TraceState};
-                    let span_context = SpanContext::new(
-                        TraceId::from_bytes(trace_id_bytes),
-                        SpanId::from_bytes(span_id_bytes),
-                        TraceFlags::SAMPLED,
-                        false,
-                        TraceState::default(),
-                    );
-                    let parent_context = opentelemetry::Context::new().with_remote_span_context(span_context);
-                    span.set_parent(parent_context);
-                }
-                
-                info!(
-                    target: "device_log",
-                    parent: &span,
-                    code_filepath = file.as_str(),
-                    code_lineno = line,
-                    code_namespace = module.as_str(),
-                    "{}",
-                    message
-                );
-                
-                // Add to active spans so future logs in this missing span are attached properly
-                self.active_spans.insert(span_id.to_string(), span);
-            } else {
-                info!(
-                    target: "device_log",
-                    code_filepath = file.as_str(),
-                    code_lineno = line,
-                    code_namespace = module.as_str(),
-                    "{}",
-                    message
-                );
-            }
+            info!(
+                target: "device_log",
+                code_filepath = file.as_str(),
+                code_lineno = line,
+                code_namespace = module.as_str(),
+                "{}",
+                message
+            );
         }
     }
 }
