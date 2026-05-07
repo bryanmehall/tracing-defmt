@@ -1,8 +1,8 @@
 use defmt_decoder::{DecodeError, Frame, Location, StreamDecoder, Table};
+use opentelemetry::trace::{SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState};
 use std::collections::{BTreeMap, HashMap};
 use tracing::{info, span, Level, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
-use opentelemetry::trace::{SpanContext, SpanId, TraceFlags, TraceId, TraceState, TraceContextExt};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -30,13 +30,17 @@ impl TraceDecoder {
         Ok(Self { table, locations })
     }
 
-    pub fn new_stream(&self) -> TraceStream {
+    pub fn new_stream(&self) -> TraceStream<'_> {
         let stream_decoder = self.table.new_stream_decoder();
         TraceStream {
             parent: self,
             stream_decoder: Some(stream_decoder),
             active_spans: HashMap::new(),
         }
+    }
+
+    pub fn get_table_size(&self) -> usize {
+        self.table.indices().count()
     }
 }
 
@@ -48,16 +52,31 @@ pub struct TraceStream<'a> {
 
 impl<'a> TraceStream<'a> {
     pub fn process(&mut self, data: &[u8]) -> Result<(), Error> {
+        eprintln!(
+            "DECODER PROCESS: data.len()={}, hex={}",
+            data.len(),
+            hex::encode(data)
+        );
         let mut decoder = self.stream_decoder.take().unwrap();
         decoder.received(data);
 
         loop {
             match decoder.decode() {
-                Ok(frame) => self.handle_frame(frame),
-                Err(DecodeError::UnexpectedEof) => break,
-                Err(DecodeError::Malformed) => {
-                    eprintln!("⚠️  Defmt stream malformed. Resetting decoder...");
-                    decoder = self.parent.table.new_stream_decoder();
+                Ok(frame) => {
+                    self.handle_frame(frame)
+                }
+                Err(e) => {
+                    if let DecodeError::UnexpectedEof = e {
+                        break;
+                    }
+                    if let DecodeError::Malformed = e {
+                        eprintln!(
+                            "⚠️  DECODER PROCESS: Defmt stream malformed. Resetting decoder..."
+                        );
+                        decoder = self.parent.table.new_stream_decoder();
+                        break;
+                    }
+                    eprintln!("⚠️  DECODER PROCESS: DecodeError: {:?}", e);
                     break;
                 }
             }
@@ -73,35 +92,41 @@ impl<'a> TraceStream<'a> {
 
         if let Some(defmt_parser::Fragment::Literal(lit)) = fragments.first() {
             if lit == "ctx=" {
-                let _ctx_lit = display_fragments.next(); // "ctx="
-                let trace_id_high = display_fragments.next().unwrap_or_default(); 
-                let trace_id_low = display_fragments.next().unwrap_or_default(); 
-                let _colon = display_fragments.next(); // ":"
-                let span_id_str = display_fragments.next().unwrap_or_default(); 
-                let parent_lit = display_fragments.next().unwrap_or_default(); // " parent="
-                
-                if parent_lit == " parent=" {
-                    let _parent_span_id_str = display_fragments.next().unwrap_or_default(); 
-                    let event_type_lit = display_fragments.next().unwrap_or_default(); 
+                let full_msg = frame.display_message().to_string();
 
-                    let trace_id_hex = format!("{}{}", trace_id_high, trace_id_low);
-                    let span_id_hex = span_id_str;
+                // Parse full message like: "ctx=00000000000000000000000000000000:0000000000000000 parent=0000000000000000 span_enter: name"
+                if full_msg.starts_with("ctx=") {
+                    if let Some(parent_idx) = full_msg.find(" parent=") {
+                        let ctx_part = &full_msg[4..parent_idx];
+                        let rest = &full_msg[parent_idx + 8..];
 
-                    if event_type_lit == " span_enter: " {
-                        let content = display_fragments.next().unwrap_or_default();
-                        self.handle_span_enter(&trace_id_hex, &span_id_hex, &content, &frame);
-                    } else if event_type_lit == " span_exit: " {
-                        self.active_spans.remove(&span_id_hex);
-                    } else {
-                        // It's a normal log!
-                        let mut payload = String::new();
-                        while let Some(frag) = display_fragments.next() {
-                            payload.push_str(&frag);
+                        if let Some(space_idx) = rest.find(' ') {
+                            let parent_span_id_str = &rest[..space_idx];
+                            let event_part = &rest[space_idx + 1..];
+
+                            if let Some(colon_idx) = ctx_part.find(':') {
+                                let trace_id_hex = &ctx_part[..colon_idx];
+                                let span_id_hex = &ctx_part[colon_idx + 1..];
+
+                                if event_part.starts_with("span_enter: ") {
+                                    let content = &event_part["span_enter: ".len()..];
+                                    self.handle_span_enter(
+                                        trace_id_hex,
+                                        span_id_hex,
+                                        parent_span_id_str,
+                                        content,
+                                        &frame,
+                                    );
+                                } else if event_part.starts_with("span_exit: ") {
+                                    self.active_spans.remove(span_id_hex);
+                                } else {
+                                    self.handle_log(trace_id_hex, span_id_hex, event_part, &frame);
+                                }
+                                return;
+                            }
                         }
-                        self.handle_log(&trace_id_hex, &span_id_hex, &payload, &frame);
                     }
                 }
-                return;
             }
         }
 
@@ -109,14 +134,13 @@ impl<'a> TraceStream<'a> {
         let message = frame.display_message().to_string();
         self.handle_log("", "", &message, &frame);
     }
-
-    fn handle_span_enter(&mut self, trace_id: &str, span_id: &str, name: &str, frame: &Frame) {
+    fn handle_span_enter(&mut self, trace_id: &str, span_id: &str, parent_span_id: &str, name: &str, frame: &Frame) {
         let clean_name = if let Some(idx) = name.find("; file=") {
             &name[..idx]
         } else {
             name
         };
-        
+
         let (func_name, args) = if let Some(idx) = clean_name.find('(') {
             let end = clean_name.len().saturating_sub(1);
             (&clean_name[..idx], &clean_name[idx + 1..end])
@@ -142,11 +166,12 @@ impl<'a> TraceStream<'a> {
             args = args
         );
 
-        if trace_id.len() == 32 && span_id.len() == 16 {
+        if trace_id.len() == 32 && parent_span_id.len() == 16 {
             let mut trace_id_bytes = [0u8; 16];
             let mut span_id_bytes = [0u8; 8];
-            if hex::decode_to_slice(trace_id, &mut trace_id_bytes).is_ok() &&
-               hex::decode_to_slice(span_id, &mut span_id_bytes).is_ok() {
+            if hex::decode_to_slice(trace_id, &mut trace_id_bytes).is_ok()
+                && hex::decode_to_slice(parent_span_id, &mut span_id_bytes).is_ok()
+            {
                 let span_context = SpanContext::new(
                     TraceId::from_bytes(trace_id_bytes),
                     SpanId::from_bytes(span_id_bytes),
@@ -154,12 +179,13 @@ impl<'a> TraceStream<'a> {
                     false,
                     TraceState::default(),
                 );
-                let parent_context = opentelemetry::Context::new().with_remote_span_context(span_context);
+                let parent_context =
+                    opentelemetry::Context::new().with_remote_span_context(span_context);
                 span.set_parent(parent_context);
             }
         }
 
-        span.set_attribute("otel.name", func_name.to_string()); 
+        span.set_attribute("otel.name", func_name.to_string());
         span.set_attribute("code.function", func_name.to_string());
         span.set_attribute("code.filepath", file);
         span.set_attribute("code.lineno", line);
@@ -200,9 +226,12 @@ impl<'a> TraceStream<'a> {
                 );
                 let mut trace_id_bytes = [0u8; 16];
                 let mut span_id_bytes = [0u8; 8];
-                if hex::decode_to_slice(trace_id, &mut trace_id_bytes).is_ok() &&
-                   hex::decode_to_slice(span_id, &mut span_id_bytes).is_ok() {
-                    use opentelemetry::trace::{SpanContext, TraceContextExt, SpanId, TraceFlags, TraceId, TraceState};
+                if hex::decode_to_slice(trace_id, &mut trace_id_bytes).is_ok()
+                    && hex::decode_to_slice(span_id, &mut span_id_bytes).is_ok()
+                {
+                    use opentelemetry::trace::{
+                        SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, TraceState,
+                    };
                     let span_context = SpanContext::new(
                         TraceId::from_bytes(trace_id_bytes),
                         SpanId::from_bytes(span_id_bytes),
@@ -210,10 +239,11 @@ impl<'a> TraceStream<'a> {
                         false,
                         TraceState::default(),
                     );
-                    let parent_context = opentelemetry::Context::new().with_remote_span_context(span_context);
+                    let parent_context =
+                        opentelemetry::Context::new().with_remote_span_context(span_context);
                     span.set_parent(parent_context);
                 }
-                
+
                 info!(
                     target: "device_log",
                     parent: &span,
@@ -223,7 +253,7 @@ impl<'a> TraceStream<'a> {
                     "{}",
                     message
                 );
-                
+
                 self.active_spans.insert(span_id.to_string(), span);
             } else {
                 info!(
