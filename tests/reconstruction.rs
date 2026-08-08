@@ -16,7 +16,7 @@ fn process_logs(logs: &[String]) -> Vec<(String, String)> {
         if line.starts_with("ctx=") {
             let space_idx = line.find(" parent=").or_else(|| line.find(' ')).unwrap();
             let ctx_str = &line[4..space_idx];
-            
+
             // Expected format: 0000000000000000000000000000000C:000000000000000C
             let mut split = ctx_str.split(':');
             let _trace_id = split.next().unwrap();
@@ -61,8 +61,10 @@ fn process_logs(logs: &[String]) -> Vec<(String, String)> {
 #[test]
 fn test_stateless_recovery_span() {
     let logs = vec![
-        "ctx=0000000000000000000000000000000c:000000000000000c an orphaned log from missing span".to_string(),
-        "ctx=0000000000000000000000000000000c:000000000000000c another log in the recovered span".to_string(),
+        "ctx=0000000000000000000000000000000c:000000000000000c an orphaned log from missing span"
+            .to_string(),
+        "ctx=0000000000000000000000000000000c:000000000000000c another log in the recovered span"
+            .to_string(),
     ];
 
     let output = process_logs(&logs);
@@ -70,8 +72,14 @@ fn test_stateless_recovery_span() {
     assert_eq!(
         output,
         vec![
-            ("recovery_span".to_string(), "an orphaned log from missing span".to_string()),
-            ("recovery_span".to_string(), "another log in the recovered span".to_string()),
+            (
+                "recovery_span".to_string(),
+                "an orphaned log from missing span".to_string()
+            ),
+            (
+                "recovery_span".to_string(),
+                "another log in the recovered span".to_string()
+            ),
         ]
     );
 }

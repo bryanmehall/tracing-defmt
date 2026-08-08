@@ -62,9 +62,7 @@ impl<'a> TraceStream<'a> {
 
         loop {
             match decoder.decode() {
-                Ok(frame) => {
-                    self.handle_frame(frame)
-                }
+                Ok(frame) => self.handle_frame(frame),
                 Err(e) => {
                     if let DecodeError::UnexpectedEof = e {
                         break;
@@ -134,7 +132,14 @@ impl<'a> TraceStream<'a> {
         let message = frame.display_message().to_string();
         self.handle_log("", "", &message, &frame);
     }
-    fn handle_span_enter(&mut self, trace_id: &str, span_id: &str, parent_span_id: &str, name: &str, frame: &Frame) {
+    fn handle_span_enter(
+        &mut self,
+        trace_id: &str,
+        span_id: &str,
+        parent_span_id: &str,
+        name: &str,
+        frame: &Frame,
+    ) {
         let clean_name = if let Some(idx) = name.find("; file=") {
             &name[..idx]
         } else {

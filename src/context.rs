@@ -14,7 +14,7 @@ pub struct TraceContext {
     pub trace_flags: u8,
 }
 
-// A zero-allocation global registry. 
+// A zero-allocation global registry.
 // Cell allows mutability inside the Mutex without &mut references.
 static ACTIVE_CONTEXT: Mutex<Cell<Option<TraceContext>>> = Mutex::new(Cell::new(None));
 static NEXT_TRACE_ID: Mutex<Cell<u64>> = Mutex::new(Cell::new(1));

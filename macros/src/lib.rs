@@ -314,7 +314,10 @@ fn impl_log_macro(level: &str, args: TokenStream) -> TokenStream {
         final_args.push(val);
     }
 
-    let with_ctx_str = format!("ctx={{:016x}}{{:016x}}:{{:016x}} parent={{:016x}} {}", final_fmt_str);
+    let with_ctx_str = format!(
+        "ctx={{:016x}}{{:016x}}:{{:016x}} parent={{:016x}} {}",
+        final_fmt_str
+    );
 
     quote! {
         if let Some(__ctx) = ::tracing_defmt::context::get_active() {

@@ -22,7 +22,7 @@ fn dummy_waker() -> Waker {
 #[test]
 fn test_sync_guard() {
     let _lock = TEST_MUTEX.lock().unwrap();
-    
+
     // Clear any residual context from other tests
     assert_eq!(get_active(), None);
 
@@ -47,7 +47,7 @@ fn test_trace_id_entropy() {
     tracing_defmt::context::init(seed);
 
     let ctx = TraceContext::new_root();
-    
+
     // The upper 8 bytes of the trace_id should match our seed
     let mut extracted_seed = [0u8; 8];
     extracted_seed.copy_from_slice(&ctx.trace_id[..8]);
