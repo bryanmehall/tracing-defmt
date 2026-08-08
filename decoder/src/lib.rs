@@ -52,11 +52,6 @@ pub struct TraceStream<'a> {
 
 impl<'a> TraceStream<'a> {
     pub fn process(&mut self, data: &[u8]) -> Result<(), Error> {
-        eprintln!(
-            "DECODER PROCESS: data.len()={}, hex={}",
-            data.len(),
-            hex::encode(data)
-        );
         let mut decoder = self.stream_decoder.take().unwrap();
         decoder.received(data);
 
