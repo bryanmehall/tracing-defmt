@@ -31,11 +31,23 @@ impl TraceDecoder {
     }
 
     pub fn new_stream(&self) -> TraceStream<'_> {
+        self.new_stream_with_attributes(Vec::new())
+    }
+
+    /// Like [`Self::new_stream`], but every reconstructed span carries these
+    /// attributes — per-connection device identity (OTel resource attributes:
+    /// `device.id`, `fw.version`, …) for telemetry sources that identify
+    /// themselves at connect time.
+    pub fn new_stream_with_attributes(
+        &self,
+        resource_attrs: Vec<(String, String)>,
+    ) -> TraceStream<'_> {
         let stream_decoder = self.table.new_stream_decoder();
         TraceStream {
             parent: self,
             stream_decoder: Some(stream_decoder),
             active_spans: HashMap::new(),
+            resource_attrs,
         }
     }
 
@@ -48,6 +60,15 @@ pub struct TraceStream<'a> {
     parent: &'a TraceDecoder,
     stream_decoder: Option<Box<dyn StreamDecoder + 'a>>,
     active_spans: HashMap<String, Span>,
+    resource_attrs: Vec<(String, String)>,
+}
+
+impl<'a> TraceStream<'a> {
+    fn apply_resource_attrs(&self, span: &Span) {
+        for (k, v) in &self.resource_attrs {
+            span.set_attribute(k.clone(), v.clone());
+        }
+    }
 }
 
 impl<'a> TraceStream<'a> {
@@ -190,6 +211,7 @@ impl<'a> TraceStream<'a> {
         span.set_attribute("code.filepath", file);
         span.set_attribute("code.lineno", line);
         span.set_attribute("code.namespace", module);
+        self.apply_resource_attrs(&span);
 
         self.active_spans.insert(span_id.to_string(), span);
     }
@@ -254,6 +276,7 @@ impl<'a> TraceStream<'a> {
                     message
                 );
 
+                self.apply_resource_attrs(&span);
                 self.active_spans.insert(span_id.to_string(), span);
             } else {
                 info!(
